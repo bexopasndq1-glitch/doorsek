@@ -137,6 +137,14 @@ local I18N = {
         tg_esp_gold = "ESP Золото",
         tg_esp_ent = "ESP Сущности",
         tg_esp_hide = "ESP Укрытия",
+        tg_esp_levers = "ESP Рычаги",
+        tg_esp_chests = "ESP Сундуки",
+        tg_esp_books = "ESP Книги (Фигура)",
+        tg_esp_fake = "ESP Фейк-комнаты (Дюп)",
+        lbl_lever = "Рычаг",
+        lbl_chest = "Сундук",
+        lbl_book = "Книга",
+        lbl_fake = "Фейк-дверь",
         sec_world = "МИР",
         tg_fullbright = "Fullbright",
         tg_nofog = "Без тумана",
@@ -147,6 +155,22 @@ local I18N = {
         tg_instant = "Мгновенное взаимодействие",
         tg_alert = "Оповещение о сущностях",
         alert = "Появился %s! Прячься",
+        ent_rush = "Раш",
+        ent_ambush = "Амбуш",
+        ent_eyes = "Глаза",
+        ent_screech = "Скрич",
+        ent_sally = "Салли",
+        ent_seek = "Сик",
+        ent_figure = "Фигура",
+        ent_dread = "Дред",
+        alert_rush = "Летит Раш! Прячься!",
+        alert_ambush = "Летит Амбуш! Прячься!",
+        alert_eyes = "Появились Глаза! Не смотри на них!",
+        alert_screech = "Появился Скрич! Посмотри вокруг!",
+        alert_sally = "Появилась Салли! Найди её любимую игрушку где-то в шкафчиках!",
+        alert_seek = "В этой комнате появится Сик! Подготовься к побегу, удачи!",
+        alert_figure = "Комната Фигуры! Найди книги, которые подсвечиваются!",
+        alert_dread = "Появился Дред! Беги в следующую комнату!",
         no_prompt = "В твоём executor нет fireproximityprompt",
         hint = "RightShift -\nскрыть меню",
         killed = "VitaHub Doors остановлен, GUI удалён",
@@ -163,6 +187,14 @@ local I18N = {
         tg_esp_gold = "ESP Gold",
         tg_esp_ent = "ESP Entities",
         tg_esp_hide = "ESP Hiding Spots",
+        tg_esp_levers = "ESP Levers",
+        tg_esp_chests = "ESP Chests",
+        tg_esp_books = "ESP Books (Figure)",
+        tg_esp_fake = "ESP Fake Rooms (Dupe)",
+        lbl_lever = "Lever",
+        lbl_chest = "Chest",
+        lbl_book = "Book",
+        lbl_fake = "Fake Door",
         sec_world = "WORLD",
         tg_fullbright = "Fullbright",
         tg_nofog = "No Fog",
@@ -173,6 +205,22 @@ local I18N = {
         tg_instant = "Instant Interact",
         tg_alert = "Entity Alert",
         alert = "%s spawned! Take cover",
+        ent_rush = "Rush",
+        ent_ambush = "Ambush",
+        ent_eyes = "Eyes",
+        ent_screech = "Screech",
+        ent_sally = "Sally",
+        ent_seek = "Seek",
+        ent_figure = "Figure",
+        ent_dread = "Dread",
+        alert_rush = "Rush is coming! Hide!",
+        alert_ambush = "Ambush is coming! Hide!",
+        alert_eyes = "Eyes spawned! Don't look at them!",
+        alert_screech = "Screech spawned! Look around!",
+        alert_sally = "Sally spawned! Find her favorite toy somewhere in the lockers!",
+        alert_seek = "Seek will appear in this room! Get ready to run, good luck!",
+        alert_figure = "Figure's room! Find the books that light up!",
+        alert_dread = "Dread spawned! Run to the next room!",
         no_prompt = "Your executor has no fireproximityprompt",
         hint = "RightShift -\nhide menu",
         killed = "VitaHub Doors stopped, GUI removed",
@@ -202,6 +250,10 @@ local state = {
     espGold = false,
     espEntities = false,
     espHide = false,
+    espLevers = false,
+    espChests = false,
+    espBooks = false,
+    espFake = false,
     fullbright = false,
     noFog = false,
     speed = false,
@@ -219,7 +271,7 @@ local refreshGui = function() end
 local function notify(text)
     pcall(function()
         game:GetService("StarterGui"):SetCore("SendNotification", {
-            Title = "VitaHub", Text = text, Duration = 3,
+            Title = "VitaHub", Text = text, Duration = 4,
         })
     end)
 end
@@ -336,10 +388,22 @@ local function entityLabel(name)
     if n == "halt" then return "Halt" end
     if n == "screech" then return "Screech" end
     if n:find("^figure") then return "Figure" end
+    if n:find("^sally") then return "Sally" end
+    if n:find("^dread") then return "Dread" end
     if n == "a60" then return "A-60" end
     if n == "a120" then return "A-120" end
     if n:find("^jeff") then return "Jeff" end
     return nil
+end
+
+local function isFakeDoor(model)
+    local n = model.Name:lower()
+    return n:find("fake", 1, true) ~= nil and n:find("door", 1, true) ~= nil
+end
+
+local function anyEspOn()
+    return state.espDoors or state.espItems or state.espGold or state.espHide or state.espEntities
+        or state.espLevers or state.espChests or state.espBooks or state.espFake
 end
 
 local function scanAll()
@@ -355,7 +419,7 @@ local function scanAll()
             end
         end
 
-        if state.espItems or state.espGold or state.espHide or state.espEntities then
+        if anyEspOn() then
             for _, d in ipairs(rooms:GetDescendants()) do
                 if d:IsA("ProximityPrompt") then
                     local nm = d.Name
@@ -369,9 +433,21 @@ local function scanAll()
                             addESP("hide", target, Color3.fromRGB(120, 200, 255), "Hide", false)
                         end
                     end
-                elseif state.espEntities and d:IsA("Model") then
-                    local lb = entityLabel(d.Name)
-                    if lb then addESP("entities", d, RED, lb, true) end
+                elseif d:IsA("Model") then
+                    local n = d.Name
+                    local low = n:lower()
+                    if state.espBooks and n == "LiveHintBook" then
+                        addESP("books", d, Color3.fromRGB(120, 255, 160), T("lbl_book"), true)
+                    elseif state.espLevers and (n == "LeverForGate" or low:find("^lever")) then
+                        addESP("levers", d, Color3.fromRGB(255, 150, 60), T("lbl_lever"), true)
+                    elseif state.espChests and low:find("^chestbox") then
+                        addESP("chests", d, Color3.fromRGB(255, 190, 70), T("lbl_chest"), true)
+                    elseif state.espFake and isFakeDoor(d) then
+                        addESP("fake", d, Color3.fromRGB(255, 80, 200), T("lbl_fake"), true)
+                    elseif state.espEntities then
+                        local lb = entityLabel(n)
+                        if lb then addESP("entities", d, RED, lb, true) end
+                    end
                 end
             end
         end
@@ -391,21 +467,60 @@ end
 
 task.spawn(function()
     while alive do
-        if state.espDoors or state.espItems or state.espGold or state.espHide or state.espEntities then
+        if anyEspOn() then
             pcall(scanAll)
         end
         task.wait(1)
     end
 end)
 
-track(Workspace.ChildAdded:Connect(function(c)
+local ENT_KEYS = {
+    Rush = "ent_rush", Ambush = "ent_ambush", Eyes = "ent_eyes", Screech = "ent_screech",
+    Sally = "ent_sally", Seek = "ent_seek", Figure = "ent_figure", Dread = "ent_dread",
+}
+
+local ALERT_KEYS = {
+    Rush = "alert_rush", Ambush = "alert_ambush", Eyes = "alert_eyes", Screech = "alert_screech",
+    Sally = "alert_sally", Seek = "alert_seek", Figure = "alert_figure", Dread = "alert_dread",
+}
+
+local function announce(label)
+    lastEntity = ENT_KEYS[label] and T(ENT_KEYS[label]) or label
     if not state.alert then return end
-    local lb = entityLabel(c.Name)
-    if lb then
-        lastEntity = lb
-        notify(T("alert", lb))
+    local key = ALERT_KEYS[label]
+    if key then
+        notify(T(key))
+    else
+        notify(T("alert", label))
     end
+end
+
+track(Workspace.ChildAdded:Connect(function(c)
+    local lb = entityLabel(c.Name)
+    if lb then announce(lb) end
 end))
+
+local function hookRooms(rooms)
+    track(rooms.ChildAdded:Connect(function(room)
+        task.wait(1.5)
+        if not room.Parent then return end
+        for _, d in ipairs(room:GetDescendants()) do
+            if d.Name == "LiveHintBook" or entityLabel(d.Name) == "Figure" then
+                announce("Figure")
+                return
+            end
+        end
+    end))
+end
+
+local currentRooms = Workspace:FindFirstChild("CurrentRooms")
+if currentRooms then
+    hookRooms(currentRooms)
+else
+    track(Workspace.ChildAdded:Connect(function(c)
+        if c.Name == "CurrentRooms" then hookRooms(c) end
+    end))
+end
 
 local origLighting
 local function saveLighting()
@@ -501,6 +616,10 @@ local function toggleEspItems() toggle("espItems", function(on) if not on then c
 local function toggleEspGold() toggle("espGold", function(on) if not on then clearCat("gold") end end) end
 local function toggleEspEnt() toggle("espEntities", function(on) if not on then clearCat("entities") end end) end
 local function toggleEspHide() toggle("espHide", function(on) if not on then clearCat("hide") end end) end
+local function toggleEspLevers() toggle("espLevers", function(on) if not on then clearCat("levers") end end) end
+local function toggleEspChests() toggle("espChests", function(on) if not on then clearCat("chests") end end) end
+local function toggleEspBooks() toggle("espBooks", function(on) if not on then clearCat("books") end end) end
+local function toggleEspFake() toggle("espFake", function(on) if not on then clearCat("fake") end end) end
 local function toggleFullbright() toggle("fullbright", function(on) if not on and not state.noFog then restoreLighting() end end) end
 local function toggleNoFog() toggle("noFog", function(on) if not on and not state.fullbright then restoreLighting() end end) end
 local function toggleSpeed()
@@ -916,6 +1035,10 @@ local function buildGui()
     makeToggle(visualsPage, T("tg_esp_gold"), function() return state.espGold end, toggleEspGold)
     makeToggle(visualsPage, T("tg_esp_ent"), function() return state.espEntities end, toggleEspEnt)
     makeToggle(visualsPage, T("tg_esp_hide"), function() return state.espHide end, toggleEspHide)
+    makeToggle(visualsPage, T("tg_esp_levers"), function() return state.espLevers end, toggleEspLevers)
+    makeToggle(visualsPage, T("tg_esp_chests"), function() return state.espChests end, toggleEspChests)
+    makeToggle(visualsPage, T("tg_esp_books"), function() return state.espBooks end, toggleEspBooks)
+    makeToggle(visualsPage, T("tg_esp_fake"), function() return state.espFake end, toggleEspFake)
     sectionLabel(visualsPage, T("sec_world"))
     makeToggle(visualsPage, T("tg_fullbright"), function() return state.fullbright end, toggleFullbright)
     makeToggle(visualsPage, T("tg_nofog"), function() return state.noFog end, toggleNoFog)
@@ -958,8 +1081,7 @@ local function buildGui()
 
     refreshGui = function()
         for _, update in ipairs(updaters) do update() end
-        local anyOn = state.autoLoot or state.speed or state.espDoors or state.espItems
-            or state.espGold or state.espEntities or state.espHide
+        local anyOn = state.autoLoot or state.speed or anyEspOn()
         dot.BackgroundColor3 = anyOn and GOOD or MUTED
     end
 
