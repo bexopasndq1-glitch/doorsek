@@ -174,6 +174,12 @@ local I18N = {
         no_prompt = "В твоём executor нет fireproximityprompt",
         hint = "RightShift -\nскрыть меню",
         killed = "VitaHub Doors остановлен, GUI удалён",
+        tg_libcode = "Код библиотеки (Фигура)",
+        tg_libopen = "Авто-открытие двери Фигуры",
+        lib_code = "Код от библиотеки: %s",
+        lib_entered = "Код введён: %s",
+        seek_speed_off = "Сик! Спид-буст отключён",
+        seek_speed_on = "Сик позади, спид-буст снова включён",
         loaded = "VitaHub Doors v1.0 загружен. RightShift - скрыть меню",
         status_idle = "Готов",
         status_loot = "Авто-подбор включён",
@@ -224,6 +230,12 @@ local I18N = {
         no_prompt = "Your executor has no fireproximityprompt",
         hint = "RightShift -\nhide menu",
         killed = "VitaHub Doors stopped, GUI removed",
+        tg_libcode = "Library Code (Figure)",
+        tg_libopen = "Auto Open Figure Door",
+        lib_code = "Library code: %s",
+        lib_entered = "Code entered: %s",
+        seek_speed_off = "Seek! Speed boost off",
+        seek_speed_on = "Seek is gone, speed boost back on",
         loaded = "VitaHub Doors v1.0 loaded. RightShift - hide menu",
         status_idle = "Ready",
         status_loot = "Auto Loot is on",
@@ -254,6 +266,8 @@ local state = {
     espChests = false,
     espBooks = false,
     espFake = false,
+    libCode = false,
+    libOpen = false,
     fullbright = false,
     noFog = false,
     speed = false,
@@ -262,8 +276,9 @@ local state = {
     alert = true,
 }
 
-local SPEEDS = {17, 18, 19, 20}
+local SPEEDS = {17, 18, 19, 20, 25, 30}
 local speedIdx = 2
+local boostSpeed = 16
 local lastEntity = "-"
 local statusText = T("status_idle")
 local refreshGui = function() end
@@ -495,10 +510,61 @@ local function announce(label)
     end
 end
 
+local seekModels = {}
+local seekCount = 0
+local seekSince = 0
+local speedWasOn = false
+
+local function seekStarted(c)
+    if seekModels[c] then return end
+    seekModels[c] = true
+    seekCount = seekCount + 1
+    if seekCount == 1 then
+        seekSince = os.clock()
+        speedWasOn = state.speed
+        if state.speed then
+            state.speed = false
+            boostSpeed = 16
+            local hum = getHumanoid()
+            if hum then hum.WalkSpeed = 16 end
+            refreshGui()
+            notify(T("seek_speed_off"))
+        end
+    end
+end
+
+local function seekEnded(c)
+    if not seekModels[c] then return end
+    seekModels[c] = nil
+    seekCount = math.max(0, seekCount - 1)
+    if seekCount == 0 and speedWasOn then
+        speedWasOn = false
+        state.speed = true
+        refreshGui()
+        notify(T("seek_speed_on"))
+    end
+end
+
 track(Workspace.ChildAdded:Connect(function(c)
     local lb = entityLabel(c.Name)
-    if lb then announce(lb) end
+    if lb then
+        announce(lb)
+        if lb == "Seek" then seekStarted(c) end
+    end
 end))
+
+track(Workspace.ChildRemoved:Connect(function(c)
+    if seekModels[c] then seekEnded(c) end
+end))
+
+task.spawn(function()
+    while alive do
+        if seekCount > 0 and os.clock() - seekSince > 90 then
+            for c in pairs(seekModels) do seekEnded(c) end
+        end
+        task.wait(5)
+    end
+end)
 
 local lastFigureAlert = 0
 
@@ -563,8 +629,6 @@ track(RunService.Heartbeat:Connect(function()
     end
 end))
 
-local boostSpeed = 16
-
 track(RunService.Heartbeat:Connect(function(dt)
     if not state.speed then return end
     local hum = getHumanoid()
@@ -572,13 +636,13 @@ track(RunService.Heartbeat:Connect(function(dt)
 
     local target = SPEEDS[speedIdx]
     if hum.MoveDirection.Magnitude > 0 then
-        boostSpeed = math.min(target, boostSpeed + 4 * dt)
+        boostSpeed = math.min(target, boostSpeed + 5 * dt)
     else
         boostSpeed = math.max(16, boostSpeed - 20 * dt)
     end
 
     if boostSpeed > 16.05 then
-        hum.WalkSpeed = boostSpeed
+        hum.WalkSpeed = boostSpeed + math.sin(os.clock() * 2.3) * 0.1
     end
 end))
 
@@ -621,6 +685,102 @@ task.spawn(function()
     end
 end)
 
+local function readLibraryCode()
+    local pg = player:FindFirstChild("PlayerGui")
+    local perm = pg and pg:FindFirstChild("PermUI")
+    local hints = perm and perm:FindFirstChild("Hints")
+    if not hints then return nil end
+
+    local paper = player.Character and player.Character:FindFirstChild("LibraryHintPaper")
+    if not paper then paper = player.Backpack:FindFirstChild("LibraryHintPaper") end
+    if not paper then return nil end
+
+    local ui = paper:FindFirstChild("UI")
+    if not ui then return nil end
+
+    local digits, count = {}, 0
+    for _, icon in ipairs(ui:GetChildren()) do
+        local idx = tonumber(icon.Name)
+        if icon:IsA("ImageLabel") and idx then
+            count = count + 1
+            digits[idx] = "_"
+            for _, hint in ipairs(hints:GetChildren()) do
+                if hint:IsA("ImageLabel") and hint.Visible and hint.ImageRectOffset == icon.ImageRectOffset then
+                    local t = hint:FindFirstChild("TextLabel")
+                    if t then digits[idx] = t.Text end
+                end
+            end
+        end
+    end
+
+    if count == 0 then return nil end
+    local out = {}
+    for i = 1, count do out[i] = digits[i] or "_" end
+    return table.concat(out)
+end
+
+local function isPadlockPrompt(prompt)
+    local a = prompt.Parent
+    while a and a ~= Workspace do
+        if a.Name:lower():find("padlock", 1, true) then return true end
+        a = a.Parent
+    end
+    return false
+end
+
+local openTries = {}
+
+local function tryOpenPadlock(code)
+    local rooms = Workspace:FindFirstChild("CurrentRooms")
+    local root = getRoot()
+    if not rooms or not root then return end
+
+    for _, d in ipairs(rooms:GetDescendants()) do
+        if d:IsA("ProximityPrompt") and d.Name == "UnlockPrompt" and d.Enabled and isPadlockPrompt(d) then
+            local holder = d.Parent
+            local pos
+            if holder and holder:IsA("BasePart") then
+                pos = holder.Position
+            elseif holder and holder:IsA("Attachment") then
+                pos = holder.WorldPosition
+            end
+
+            local tries = openTries[d] or 0
+            if pos and tries < 5 and (pos - root.Position).Magnitude <= d.MaxActivationDistance + 3 then
+                local remotes = ReplicatedStorage:FindFirstChild("RemotesFolder")
+                local pl = remotes and remotes:FindFirstChild("PL")
+                if pl then
+                    openTries[d] = tries + 1
+                    pcall(function() pl:FireServer(code) end)
+                    if tries == 0 then notify(T("lib_entered", code)) end
+                end
+            end
+        end
+    end
+end
+
+local libCodeNotified = nil
+
+task.spawn(function()
+    while alive do
+        if state.libCode or state.libOpen then
+            local code = readLibraryCode()
+            local complete = code ~= nil and code:match("^%d+$") ~= nil
+
+            if state.libCode and complete and code ~= libCodeNotified then
+                libCodeNotified = code
+                print("[VitaHub] " .. code)
+                notify(T("lib_code", code))
+            end
+
+            if state.libOpen and complete then
+                pcall(tryOpenPadlock, code)
+            end
+        end
+        task.wait(1)
+    end
+end)
+
 local function setFlag(name, value)
     state[name] = value
     refreshGui()
@@ -654,6 +814,8 @@ end
 local function toggleLoot() toggle("autoLoot") end
 local function toggleInstant() toggle("instant") end
 local function toggleAlert() toggle("alert") end
+local function toggleLibCode() toggle("libCode") end
+local function toggleLibOpen() toggle("libOpen") end
 
 local function setSpeedIdx(i)
     speedIdx = i
@@ -1066,12 +1228,14 @@ local function buildGui()
 
     sectionLabel(playerPage, T("sec_speed"))
     makeToggle(playerPage, T("tg_speed"), function() return state.speed end, toggleSpeed)
-    makeSegment(playerPage, {"17", "18", "19", "20"}, function() return speedIdx end, setSpeedIdx)
+    makeSegment(playerPage, {"17", "18", "19", "20", "25", "30"}, function() return speedIdx end, setSpeedIdx)
 
     sectionLabel(autoPage, T("sec_auto"))
     makeToggle(autoPage, T("tg_loot"), function() return state.autoLoot end, toggleLoot)
     makeToggle(autoPage, T("tg_instant"), function() return state.instant end, toggleInstant)
     makeToggle(autoPage, T("tg_alert"), function() return state.alert end, toggleAlert)
+    makeToggle(autoPage, T("tg_libcode"), function() return state.libCode end, toggleLibCode)
+    makeToggle(autoPage, T("tg_libopen"), function() return state.libOpen end, toggleLibOpen)
 
     local statusRow = Instance.new("Frame")
     statusRow.Position = UDim2.new(0, CONTENT_X, 1, -14 - 26)
