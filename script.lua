@@ -262,7 +262,7 @@ local state = {
     alert = true,
 }
 
-local SPEEDS = {18, 20, 22, 25}
+local SPEEDS = {17, 18, 19, 20}
 local speedIdx = 2
 local lastEntity = "-"
 local statusText = T("status_idle")
@@ -500,15 +500,23 @@ track(Workspace.ChildAdded:Connect(function(c)
     if lb then announce(lb) end
 end))
 
+local lastFigureAlert = 0
+
 local function hookRooms(rooms)
     track(rooms.ChildAdded:Connect(function(room)
         task.wait(1.5)
         if not room.Parent then return end
+
+        local books = 0
         for _, d in ipairs(room:GetDescendants()) do
-            if d.Name == "LiveHintBook" or entityLabel(d.Name) == "Figure" then
-                announce("Figure")
-                return
+            if d:IsA("Model") and d.Name == "LiveHintBook" then
+                books = books + 1
             end
+        end
+
+        if books >= 2 and os.clock() - lastFigureAlert > 30 then
+            lastFigureAlert = os.clock()
+            announce("Figure")
         end
     end))
 end
@@ -555,10 +563,22 @@ track(RunService.Heartbeat:Connect(function()
     end
 end))
 
-track(RunService.Heartbeat:Connect(function()
-    if state.speed then
-        local hum = getHumanoid()
-        if hum then hum.WalkSpeed = SPEEDS[speedIdx] end
+local boostSpeed = 16
+
+track(RunService.Heartbeat:Connect(function(dt)
+    if not state.speed then return end
+    local hum = getHumanoid()
+    if not hum then return end
+
+    local target = SPEEDS[speedIdx]
+    if hum.MoveDirection.Magnitude > 0 then
+        boostSpeed = math.min(target, boostSpeed + 4 * dt)
+    else
+        boostSpeed = math.max(16, boostSpeed - 20 * dt)
+    end
+
+    if boostSpeed > 16.05 then
+        hum.WalkSpeed = boostSpeed
     end
 end))
 
@@ -625,6 +645,7 @@ local function toggleNoFog() toggle("noFog", function(on) if not on and not stat
 local function toggleSpeed()
     toggle("speed", function(on)
         if not on then
+            boostSpeed = 16
             local hum = getHumanoid()
             if hum then hum.WalkSpeed = 16 end
         end
@@ -1045,7 +1066,7 @@ local function buildGui()
 
     sectionLabel(playerPage, T("sec_speed"))
     makeToggle(playerPage, T("tg_speed"), function() return state.speed end, toggleSpeed)
-    makeSegment(playerPage, {"18", "20", "22", "25"}, function() return speedIdx end, setSpeedIdx)
+    makeSegment(playerPage, {"17", "18", "19", "20"}, function() return speedIdx end, setSpeedIdx)
 
     sectionLabel(autoPage, T("sec_auto"))
     makeToggle(autoPage, T("tg_loot"), function() return state.autoLoot end, toggleLoot)
