@@ -178,6 +178,7 @@ local I18N = {
         tg_libopen = "Авто-открытие двери Фигуры",
         lib_code = "Код от библиотеки: %s",
         lib_entered = "Код введён: %s",
+        lib_no_remote = "Не найден remote PL в ReplicatedStorage.RemotesFolder",
         seek_speed_off = "Сик! Спид-буст отключён",
         seek_speed_on = "Сик позади, спид-буст снова включён",
         loaded = "VitaHub Doors v1.0 загружен. RightShift - скрыть меню",
@@ -234,6 +235,7 @@ local I18N = {
         tg_libopen = "Auto Open Figure Door",
         lib_code = "Library code: %s",
         lib_entered = "Code entered: %s",
+        lib_no_remote = "Remote PL not found in ReplicatedStorage.RemotesFolder",
         seek_speed_off = "Seek! Speed boost off",
         seek_speed_on = "Seek is gone, speed boost back on",
         loaded = "VitaHub Doors v1.0 loaded. RightShift - hide menu",
@@ -567,6 +569,7 @@ task.spawn(function()
 end)
 
 local lastFigureAlert = 0
+local libraryRoom = nil
 
 local function hookRooms(rooms)
     track(rooms.ChildAdded:Connect(function(room)
@@ -579,6 +582,8 @@ local function hookRooms(rooms)
                 books = books + 1
             end
         end
+
+        if books >= 2 then libraryRoom = room end
 
         if books >= 2 and os.clock() - lastFigureAlert > 30 then
             lastFigureAlert = os.clock()
@@ -719,6 +724,8 @@ local function readLibraryCode()
     return table.concat(out)
 end
 
+local FIGURE_DOOR_RANGE = 18
+
 local function isPadlockPrompt(prompt)
     local a = prompt.Parent
     while a and a ~= Workspace do
@@ -728,35 +735,87 @@ local function isPadlockPrompt(prompt)
     return false
 end
 
-local openTries = {}
+local function posOf(inst)
+    if not inst then return nil end
+    if inst:IsA("BasePart") then return inst.Position end
+    if inst:IsA("Attachment") then return inst.WorldPosition end
+    if inst:IsA("Model") then
+        local ok, cf = pcall(function() return inst:GetPivot() end)
+        if ok then return cf.Position end
+    end
+    local part = inst:FindFirstChildWhichIsA("BasePart", true)
+    return part and part.Position or nil
+end
 
-local function tryOpenPadlock(code)
+local function findLibraryRoom()
+    if libraryRoom and libraryRoom.Parent then return libraryRoom end
+    libraryRoom = nil
     local rooms = Workspace:FindFirstChild("CurrentRooms")
-    local root = getRoot()
-    if not rooms or not root then return end
-
-    for _, d in ipairs(rooms:GetDescendants()) do
-        if d:IsA("ProximityPrompt") and d.Name == "UnlockPrompt" and d.Enabled and isPadlockPrompt(d) then
-            local holder = d.Parent
-            local pos
-            if holder and holder:IsA("BasePart") then
-                pos = holder.Position
-            elseif holder and holder:IsA("Attachment") then
-                pos = holder.WorldPosition
-            end
-
-            local tries = openTries[d] or 0
-            if pos and tries < 5 and (pos - root.Position).Magnitude <= d.MaxActivationDistance + 3 then
-                local remotes = ReplicatedStorage:FindFirstChild("RemotesFolder")
-                local pl = remotes and remotes:FindFirstChild("PL")
-                if pl then
-                    openTries[d] = tries + 1
-                    pcall(function() pl:FireServer(code) end)
-                    if tries == 0 then notify(T("lib_entered", code)) end
-                end
-            end
+    if not rooms then return nil end
+    for _, room in ipairs(rooms:GetChildren()) do
+        local books = 0
+        for _, d in ipairs(room:GetDescendants()) do
+            if d:IsA("Model") and d.Name == "LiveHintBook" then books = books + 1 end
+        end
+        if books >= 2 then
+            libraryRoom = room
+            return room
         end
     end
+    return nil
+end
+
+local openTries = {}
+local lastOpenTry = 0
+local plWarned = false
+
+local function tryOpenFigureDoor(code)
+    local root = getRoot()
+    local room = findLibraryRoom()
+    if not root or not room then return end
+
+    local targets = {}
+    local door = room:FindFirstChild("Door")
+    if door then
+        if door:GetAttribute("Opened") then return end
+        local p = posOf(door)
+        if p then targets[#targets + 1] = p end
+    end
+    for _, d in ipairs(room:GetDescendants()) do
+        if d:IsA("ProximityPrompt") and isPadlockPrompt(d) then
+            local p = posOf(d.Parent)
+            if p then targets[#targets + 1] = p end
+        end
+    end
+
+    local near = false
+    for _, p in ipairs(targets) do
+        if (p - root.Position).Magnitude <= FIGURE_DOOR_RANGE then
+            near = true
+            break
+        end
+    end
+    if not near then return end
+
+    local now = os.clock()
+    local tries = openTries[room] or 0
+    if now - lastOpenTry < 1.5 or tries >= 10 then return end
+    lastOpenTry = now
+    openTries[room] = tries + 1
+
+    local remotes = ReplicatedStorage:FindFirstChild("RemotesFolder")
+    local pl = remotes and remotes:FindFirstChild("PL")
+    if not pl then
+        if not plWarned then
+            plWarned = true
+            notify(T("lib_no_remote"))
+        end
+        return
+    end
+
+    pcall(function() pl:FireServer(code) end)
+    print("[VitaHub] PL:FireServer(" .. code .. ") try " .. (tries + 1))
+    if tries == 0 then notify(T("lib_entered", code)) end
 end
 
 local libCodeNotified = nil
@@ -774,10 +833,10 @@ task.spawn(function()
             end
 
             if state.libOpen and complete then
-                pcall(tryOpenPadlock, code)
+                pcall(tryOpenFigureDoor, code)
             end
         end
-        task.wait(1)
+        task.wait(0.5)
     end
 end)
 
